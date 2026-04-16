@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Button, Card, Select, Table, Tag, Modal, message,
   Space, Popconfirm, Badge, Spin, Empty, Typography,
-  Tooltip, Input, Steps, Avatar, InputNumber,
+  Input, Steps, Avatar, InputNumber,
 } from 'antd';
 import {
   PlusOutlined, ThunderboltOutlined, SendOutlined,
