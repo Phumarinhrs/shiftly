@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  firstName String
+  lastName  String
+  role      String   @default("DOCTOR") // COORDINATOR | DOCTOR
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments     ShiftAssignment[]
+  swapsSent       SwapRequest[]     @relation("SwapRequester")
+  swapsReceived   SwapRequest[]     @relation("SwapTarget")
+  leaveReports    LeaveReport[]
+  availability    Availability[]
+  scheduleRoster  ScheduleDoctor[]
+}
+
+model Schedule {
+  id        String   @id @default(cuid())
+  title     String
+  month     Int
+  year      Int
+  status    String   @default("DRAFT") // DRAFT | PUBLISHED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shifts  Shift[]
+  doctors ScheduleDoctor[]
+
+  @@unique([month, year])
+}
+
+model ScheduleDoctor {
+  id         String @id @default(cuid())
+  scheduleId String
+  userId     String
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([scheduleId, userId])
+}
+
+model Shift {
+  id         String   @id @default(cuid())
+  scheduleId String
+  date       String   // YYYY-MM-DD
+  shiftType  String   // NIGHTSHIFT | OPD | ER | SPECIAL_CLINIC
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  schedule     Schedule          @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  assignments  ShiftAssignment[]
+  swapRequests SwapRequest[]
+}
+
+model ShiftAssignment {
+  id        String   @id @default(cuid())
+  shiftId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  shift Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([shiftId, userId])
+}
+
+model SwapRequest {
+  id           String   @id @default(cuid())
+  shiftId      String
+  requesterId  String
+  targetUserId String
+  reason       String?
+  status       String   @default("PENDING") // PENDING | ACCEPTED | DECLINED | CANCELLED
+  respondedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  shift      Shift @relation(fields: [shiftId], references: [id])
+  requester  User  @relation("SwapRequester", fields: [requesterId], references: [id])
+  targetUser User  @relation("SwapTarget", fields: [targetUserId], references: [id])
+}
+
+model LeaveReport {
+  id        String   @id @default(cuid())
+  userId    String
+  date      String   // YYYY-MM-DD
+  reason    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Availability {
+  id        String   @id @default(cuid())
+  userId    String
+  date      String   // YYYY-MM-DD
+  note      String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, date])
+}
