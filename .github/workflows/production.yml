@@ -18,7 +18,7 @@ jobs:
 
       - name: Build Backend
         working-directory: backend
-        run: npm ci && npm run build
+        run: npm ci && npx prisma generate && npm run build
 
       - name: Build Frontend
         working-directory: frontend
