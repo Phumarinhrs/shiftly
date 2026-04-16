@@ -140,18 +140,12 @@ export class SchedulesService {
     const assignments: { shiftId: string; userId: string }[] = [];
 
     for (const shift of schedule.shifts) {
-      // หาหมอที่ว่างในวันนี้
+      // หาหมอที่ว่างในวันนี้ (ไม่ block ถ้ามีเวรอื่นในวันเดียวกันอยู่แล้ว)
       const available = doctors.filter((doc) => {
         const unavailDates = unavailableMap.get(doc.id);
         if (unavailDates && unavailDates.has(shift.date)) return false;
-
-        // เช็คว่าไม่ได้ถูก assign ในวันเดียวกันแล้ว
-        const alreadyAssignedToday = assignments.some(
-          (a) =>
-            a.userId === doc.id &&
-            schedule.shifts.find((s) => s.id === a.shiftId)?.date === shift.date,
-        );
-        return !alreadyAssignedToday;
+        // ไม่ assign คนเดิมซ้ำใน shift เดิม
+        return !assignments.some((a) => a.shiftId === shift.id && a.userId === doc.id);
       });
 
       if (available.length === 0) continue;

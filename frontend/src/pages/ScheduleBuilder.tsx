@@ -12,6 +12,12 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
+  useDroppable, useDraggable, pointerWithin,
+} from '@dnd-kit/core';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { snapCenterToCursor } from '@dnd-kit/modifiers';
+import {
   schedulesApi, usersApi,
   type Schedule, type Shift, type ShiftCount,
 } from '../api/schedules';
@@ -39,12 +45,66 @@ interface DoctorSlot {
   lastName: string;
 }
 
+// ── Drag & Drop Components ────────────────────────────────────────────────────
+
+function DraggableTag({
+  shiftId, userId, label, color, onClose,
+}: {
+  shiftId: string; userId: string; label: string; color: string;
+  onClose: (e: React.MouseEvent) => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${shiftId}::${userId}`,
+    data: { shiftId, userId },
+  });
+  return (
+    <Tag
+      ref={setNodeRef}
+      color={color}
+      closable
+      onClose={onClose}
+      style={{
+        cursor: isDragging ? 'grabbing' : 'grab',
+        opacity: isDragging ? 0.25 : 1,
+        userSelect: 'none',
+        transition: 'opacity 0.15s',
+      }}
+      {...listeners}
+      {...attributes}
+    >
+      {label}
+    </Tag>
+  );
+}
+
+function DroppableCell({ shiftId, children }: { shiftId: string; children: React.ReactNode }) {
+  const { isOver, setNodeRef } = useDroppable({ id: shiftId, data: { shiftId } });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        minHeight: 32,
+        borderRadius: 6,
+        background: isOver ? 'rgba(0,122,255,0.08)' : 'transparent',
+        outline: isOver ? '2px dashed #007AFF' : 'none',
+        transition: 'background 0.15s, outline 0.15s',
+        padding: '2px 0',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function ScheduleBuilder() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [shiftCounts, setShiftCounts] = useState<ShiftCount[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCountModal, setShowCountModal] = useState(false);
+  const [draggingInfo, setDraggingInfo] = useState<{ label: string; color: string } | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   // Create modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -221,6 +281,51 @@ export default function ScheduleBuilder() {
     }
   };
 
+  const handleDragStart = (event: DragStartEvent) => {
+    const { shiftId, userId } = event.active.data.current as { shiftId: string; userId: string };
+    if (!selectedSchedule) return;
+    const shift = selectedSchedule.shifts.find((s) => s.id === shiftId);
+    const user = shift?.assignments.find((a) => a.user.id === userId)?.user;
+    if (shift && user) {
+      setDraggingInfo({
+        label: `${user.firstName} ${user.lastName.charAt(0)}.`,
+        color: SHIFT_TYPE_LABELS[shift.shiftType]?.color ?? 'blue',
+      });
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    setDraggingInfo(null);
+    const { active, over } = event;
+    if (!over || !selectedSchedule) return;
+
+    const { shiftId: fromShiftId, userId } = active.data.current as { shiftId: string; userId: string };
+    const toShiftId = (over.data.current as { shiftId: string })?.shiftId ?? String(over.id);
+    if (fromShiftId === toShiftId) return;
+
+    const toShift = selectedSchedule.shifts.find((s) => s.id === toShiftId);
+    const swapUserId = toShift?.assignments[0]?.user.id;
+
+    setLoading(true);
+    try {
+      // ถอดออกจากเวรเดิม
+      await schedulesApi.unassignDoctor(selectedSchedule.id, fromShiftId, userId);
+      if (swapUserId) {
+        // มีคนอยู่แล้ว → สลับ
+        await schedulesApi.unassignDoctor(selectedSchedule.id, toShiftId, swapUserId);
+        await schedulesApi.assignDoctor(selectedSchedule.id, fromShiftId, swapUserId);
+      }
+      // ใส่เข้าเวรใหม่
+      await schedulesApi.assignDoctor(selectedSchedule.id, toShiftId, userId);
+      await selectSchedule(selectedSchedule.id);
+      message.success(swapUserId ? 'สลับเวรแล้ว' : 'ย้ายเวรแล้ว');
+    } catch {
+      message.error('ย้ายเวรไม่สำเร็จ');
+      await selectSchedule(selectedSchedule.id);
+    }
+    setLoading(false);
+  };
+
   const handleShowCount = async () => {
     if (!selectedSchedule) return;
     try {
@@ -251,6 +356,7 @@ export default function ScheduleBuilder() {
       dataIndex: 'date',
       width: 80,
       fixed: 'left',
+      className: 'date-cell',
       render: (date: string) => {
         const d = new Date(date);
         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
@@ -266,24 +372,26 @@ export default function ScheduleBuilder() {
       title: <Tag color={SHIFT_TYPE_LABELS[type].color}>{SHIFT_TYPE_LABELS[type].label}</Tag>,
       key: type,
       width: 180,
+      className: 'shift-cell',
       render: (_: unknown, record: { date: string; shifts: Shift[] }) => {
         const shift = record.shifts.find((s) => s.shiftType === type);
         if (!shift) return <span style={{ color: '#ddd' }}>-</span>;
         const assigned = shift.assignments[0];
         if (assigned) {
           return (
-            <Tooltip title="คลิก × เพื่อถอดออก">
-              <Tag
+            <DroppableCell shiftId={shift.id}>
+              <DraggableTag
+                shiftId={shift.id}
+                userId={assigned.user.id}
+                label={`${assigned.user.firstName} ${assigned.user.lastName.charAt(0)}.`}
                 color={SHIFT_TYPE_LABELS[type].color}
-                closable
                 onClose={(e) => { e.preventDefault(); handleUnassign(shift.id, assigned.user.id); }}
-              >
-                {assigned.user.firstName} {assigned.user.lastName.charAt(0)}.
-              </Tag>
-            </Tooltip>
+              />
+            </DroppableCell>
           );
         }
         return (
+          <DroppableCell shiftId={shift.id}>
           <Select
             placeholder="เลือกแพทย์"
             size="small"
@@ -298,6 +406,7 @@ export default function ScheduleBuilder() {
               (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
             }
           />
+          </DroppableCell>
         );
       },
     })),
@@ -356,18 +465,18 @@ export default function ScheduleBuilder() {
             }
             extra={
               <Space>
-                <Button icon={<BarChartOutlined />} onClick={handleShowCount}>สรุปเวร</Button>
+                <Button icon={<BarChartOutlined />} onClick={handleShowCount}>สัดส่วนเวร</Button>
                 <Button icon={<ThunderboltOutlined />} onClick={handleGenerate}>
                   จัดเวรอัตโนมัติ
                 </Button>
                 {selectedSchedule.status === 'DRAFT' ? (
-                  <Button icon={<SendOutlined />} onClick={handlePublish}>เผยแพร่</Button>
+                  <Button icon={<SendOutlined />} onClick={handlePublish}>Publish</Button>
                 ) : (
                   <Button icon={<EditOutlined />} onClick={async () => {
                     await schedulesApi.unpublish(selectedSchedule.id);
                     setSelectedSchedule({ ...selectedSchedule, status: 'DRAFT' });
                     loadSchedules();
-                  }}>แก้ไข</Button>
+                  }}>Unpublish</Button>
                 )}
                 <Popconfirm title="ลบตารางเวรนี้?" onConfirm={handleDelete} okText="ลบ" cancelText="ยกเลิก">
                   <Button icon={<DeleteOutlined />} danger />
@@ -375,15 +484,24 @@ export default function ScheduleBuilder() {
               </Space>
             }
           >
-            <Table
-              dataSource={tableData}
-              columns={columns}
-              rowKey="date"
-              pagination={false}
-              scroll={{ x: 900 }}
-              size="small"
-              bordered
-            />
+            <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+              <Table
+                dataSource={tableData}
+                columns={columns}
+                rowKey="date"
+                pagination={false}
+                scroll={{ x: 900 }}
+                size="small"
+                bordered
+              />
+              <DragOverlay dropAnimation={null} modifiers={[snapCenterToCursor]}>
+                {draggingInfo && (
+                  <Tag color={draggingInfo.color} style={{ cursor: 'grabbing', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}>
+                    {draggingInfo.label}
+                  </Tag>
+                )}
+              </DragOverlay>
+            </DndContext>
           </Card>
         </Spin>
       ) : (
@@ -580,7 +698,7 @@ export default function ScheduleBuilder() {
 
       {/* Shift Count Modal */}
       <Modal
-        title="สรุปจำนวนเวร"
+        title="สัดส่วนเวร"
         open={showCountModal}
         onCancel={() => setShowCountModal(false)}
         footer={null}

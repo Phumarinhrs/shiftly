@@ -85,8 +85,20 @@ body {
   font-weight: 600;
 }
 
+/* ปิด row hover ทั้ง row */
 .ant-table-wrapper .ant-table-tbody > tr:hover > td {
-  background: rgba(0, 122, 255, 0.04) !important;
+  background: inherit !important;
+}
+
+/* hover เฉพาะ cell ที่ interactive */
+.ant-table-wrapper .ant-table-tbody > tr > td.shift-cell:hover {
+  background: rgba(0, 0, 0, 0.035) !important;
+  cursor: default;
+}
+
+/* วันที่ไม่ต้อง hover */
+.ant-table-wrapper .ant-table-tbody > tr > td.date-cell {
+  cursor: default;
 }
 
 .ant-select-selector {
