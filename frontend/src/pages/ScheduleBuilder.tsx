@@ -13,7 +13,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   schedulesApi, usersApi,
-  type Schedule, type Shift, type User, type ShiftCount,
+  type Schedule, type Shift, type ShiftCount,
 } from '../api/schedules';
 
 const { Title, Text } = Typography;
@@ -42,7 +42,6 @@ interface DoctorSlot {
 export default function ScheduleBuilder() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
-  const [doctors, setDoctors] = useState<User[]>([]);
   const [shiftCounts, setShiftCounts] = useState<ShiftCount[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCountModal, setShowCountModal] = useState(false);
@@ -58,7 +57,6 @@ export default function ScheduleBuilder() {
 
   useEffect(() => {
     loadSchedules();
-    loadDoctors();
   }, []);
 
   const loadSchedules = async () => {
@@ -67,15 +65,6 @@ export default function ScheduleBuilder() {
       setSchedules(data);
     } catch {
       message.error('โหลดตารางเวรไม่สำเร็จ');
-    }
-  };
-
-  const loadDoctors = async () => {
-    try {
-      const { data } = await usersApi.getDoctors();
-      setDoctors(data);
-    } catch {
-      message.error('โหลดรายชื่อแพทย์ไม่สำเร็จ');
     }
   };
 
@@ -166,7 +155,6 @@ export default function ScheduleBuilder() {
       message.success('สร้างตารางเวรสำเร็จ');
       setShowCreateModal(false);
       await loadSchedules();
-      await loadDoctors();
       setSelectedSchedule(schedule);
     } catch (err: any) {
       message.error(err.response?.data?.message || 'สร้างไม่สำเร็จ');
