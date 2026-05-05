@@ -1,17 +1,43 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-const SHIFT_TYPES = ['NIGHTSHIFT', 'OPD', 'ER', 'SPECIAL_CLINIC'] as const;
-
 @Injectable()
 export class SchedulesService {
   constructor(private prisma: PrismaService) {}
+
+  // ─── Activity Log Helper ───────────────────────────────────────────────────
+
+  private async log(
+    scheduleId: string,
+    action: string,
+    detail: string,
+    actorId?: string | null,
+  ) {
+    await this.prisma.activityLog.create({
+      data: { scheduleId, action, detail, actorId: actorId ?? null },
+    });
+  }
+
+  private async getActorName(userId?: string | null): Promise<string> {
+    if (!userId) return 'ระบบ';
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    });
+    return user ? `${user.firstName} ${user.lastName.charAt(0)}.` : 'ไม่ทราบ';
+  }
+
+  // ─── Queries ───────────────────────────────────────────────────────────────
 
   async findAll(year?: number) {
     return this.prisma.schedule.findMany({
       where: year ? { year } : undefined,
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
       include: {
+        shiftTypes: { orderBy: { order: 'asc' } },
+        doctors: {
+          include: { user: { select: { id: true, firstName: true, lastName: true } } },
+        },
         shifts: {
           include: {
             assignments: {
@@ -28,6 +54,7 @@ export class SchedulesService {
     return this.prisma.schedule.findUnique({
       where: { id },
       include: {
+        shiftTypes: { orderBy: { order: 'asc' } },
         doctors: {
           include: { user: { select: { id: true, firstName: true, lastName: true } } },
         },
@@ -49,7 +76,23 @@ export class SchedulesService {
     });
   }
 
-  async create(month: number, year: number, title?: string, doctorIds: string[] = []) {
+  // ─── Create ────────────────────────────────────────────────────────────────
+
+  readonly DEFAULT_SHIFT_TYPES = [
+    { name: 'เวรดึก',      days: [0, 1, 2, 3, 4, 5, 6] },
+    { name: 'OPD',         days: [1, 2, 3, 4, 5] },
+    { name: 'ER',          days: [0, 1, 2, 3, 4, 5, 6] },
+    { name: 'คลินิกพิเศษ', days: [1, 2, 3, 4, 5] },
+  ];
+
+  async create(
+    month: number,
+    year: number,
+    title?: string,
+    doctorIds: string[] = [],
+    shiftTypeConfigs?: { name: string; days: number[] }[],
+    actorId?: string,
+  ) {
     const monthNames = [
       '', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
       'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
@@ -64,40 +107,56 @@ export class SchedulesService {
       },
     });
 
-    // บันทึกแพทย์ในทีมของตาราง
     if (doctorIds.length > 0) {
       await this.prisma.scheduleDoctor.createMany({
         data: doctorIds.map((userId) => ({ scheduleId: schedule.id, userId })),
       });
     }
 
-    // สร้าง shift สำหรับทุกวันในเดือน
+    const types = shiftTypeConfigs && shiftTypeConfigs.length > 0
+      ? shiftTypeConfigs
+      : this.DEFAULT_SHIFT_TYPES;
+
+    await this.prisma.shiftType.createMany({
+      data: types.map((t, i) => ({
+        scheduleId: schedule.id,
+        name: t.name,
+        days: t.days.join(','),
+        order: i,
+      })),
+    });
+
     const daysInMonth = new Date(year, month, 0).getDate();
     const shiftsData: { scheduleId: string; date: string; shiftType: string }[] = [];
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const dayOfWeek = new Date(year, month - 1, day).getDay();
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-      // ทุกวัน: NIGHTSHIFT + ER
-      shiftsData.push({ scheduleId: schedule.id, date, shiftType: 'NIGHTSHIFT' });
-      shiftsData.push({ scheduleId: schedule.id, date, shiftType: 'ER' });
-
-      // วันจันทร์-ศุกร์: OPD + SPECIAL_CLINIC
-      if (!isWeekend) {
-        shiftsData.push({ scheduleId: schedule.id, date, shiftType: 'OPD' });
-        shiftsData.push({ scheduleId: schedule.id, date, shiftType: 'SPECIAL_CLINIC' });
+      for (const t of types) {
+        const allowedDays = new Set(t.days);
+        if (allowedDays.has(dayOfWeek)) {
+          shiftsData.push({ scheduleId: schedule.id, date, shiftType: t.name });
+        }
       }
     }
 
     await this.prisma.shift.createMany({ data: shiftsData });
 
+    // Log
+    const actorName = await this.getActorName(actorId);
+    await this.log(
+      schedule.id, 'CREATE',
+      `${actorName} สร้างตารางเวร ${monthNames[month]} ${year} (แพทย์ ${doctorIds.length} คน, เวร ${types.length} ประเภท)`,
+      actorId,
+    );
+
     return this.findOne(schedule.id);
   }
 
-  async autoGenerate(scheduleId: string) {
-    // ดึงข้อมูลที่จำเป็น
+  // ─── Auto Generate ─────────────────────────────────────────────────────────
+
+  async autoGenerate(scheduleId: string, actorId?: string) {
     const [schedule, scheduleDoctors] = await Promise.all([
       this.prisma.schedule.findUnique({
         where: { id: scheduleId },
@@ -116,7 +175,6 @@ export class SchedulesService {
       where: { userId: { in: doctors.map((d) => d.id) } },
     });
 
-    // สร้าง set ของวันที่แพทย์ไม่ว่าง
     const unavailableMap = new Map<string, Set<string>>();
     for (const a of unavailable) {
       if (!unavailableMap.has(a.userId)) {
@@ -125,13 +183,11 @@ export class SchedulesService {
       unavailableMap.get(a.userId)!.add(a.date);
     }
 
-    // ลบ assignment เดิมทั้งหมด
     const shiftIds = schedule.shifts.map((s) => s.id);
     await this.prisma.shiftAssignment.deleteMany({
       where: { shiftId: { in: shiftIds } },
     });
 
-    // นับเวรแต่ละคน (สมดุล ±1)
     const shiftCounts = new Map<string, number>();
     for (const doc of doctors) {
       shiftCounts.set(doc.id, 0);
@@ -140,17 +196,14 @@ export class SchedulesService {
     const assignments: { shiftId: string; userId: string }[] = [];
 
     for (const shift of schedule.shifts) {
-      // หาหมอที่ว่างในวันนี้ (ไม่ block ถ้ามีเวรอื่นในวันเดียวกันอยู่แล้ว)
       const available = doctors.filter((doc) => {
         const unavailDates = unavailableMap.get(doc.id);
         if (unavailDates && unavailDates.has(shift.date)) return false;
-        // ไม่ assign คนเดิมซ้ำใน shift เดิม
         return !assignments.some((a) => a.shiftId === shift.id && a.userId === doc.id);
       });
 
       if (available.length === 0) continue;
 
-      // เลือกคนที่มีเวรน้อยสุด
       available.sort(
         (a, b) => (shiftCounts.get(a.id) || 0) - (shiftCounts.get(b.id) || 0),
       );
@@ -160,37 +213,115 @@ export class SchedulesService {
       shiftCounts.set(selected.id, (shiftCounts.get(selected.id) || 0) + 1);
     }
 
-    // บันทึก assignments
     await this.prisma.shiftAssignment.createMany({ data: assignments });
+
+    // Log
+    const actorName = await this.getActorName(actorId);
+    await this.log(
+      scheduleId, 'GENERATE',
+      `${actorName} จัดเวรอัตโนมัติ (${assignments.length} เวร, ${doctors.length} แพทย์)`,
+      actorId,
+    );
 
     return this.findOne(scheduleId);
   }
 
-  async updateStatus(id: string, status: string) {
-    return this.prisma.schedule.update({
+  // ─── Status ────────────────────────────────────────────────────────────────
+
+  async updateStatus(id: string, status: string, actorId?: string) {
+    const result = await this.prisma.schedule.update({
       where: { id },
       data: { status },
     });
+
+    const action = status === 'PUBLISHED' ? 'PUBLISH' : 'UNPUBLISH';
+    const label = status === 'PUBLISHED' ? 'สมบูรณ์' : 'แบบร่าง';
+    const actorName = await this.getActorName(actorId);
+    await this.log(id, action, `${actorName} เปลี่ยนสถานะเป็น "${label}"`, actorId);
+
+    return result;
   }
 
   async remove(id: string) {
     return this.prisma.schedule.delete({ where: { id } });
   }
 
-  async assignDoctor(shiftId: string, userId: string) {
-    return this.prisma.shiftAssignment.create({
+  // ─── Assign / Unassign ─────────────────────────────────────────────────────
+
+  async assignDoctor(shiftId: string, userId: string, actorId?: string) {
+    const result = await this.prisma.shiftAssignment.create({
       data: { shiftId, userId },
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
+        shift: { select: { scheduleId: true, date: true, shiftType: true } },
       },
     });
+
+    const actorName = await this.getActorName(actorId);
+    const day = parseInt(result.shift.date.split('-')[2]);
+    await this.log(
+      result.shift.scheduleId, 'ASSIGN',
+      `${actorName} มอบหมาย ${result.user.firstName} ${result.user.lastName.charAt(0)}. → ${result.shift.shiftType} วันที่ ${day}`,
+      actorId,
+    );
+
+    return result;
   }
 
-  async unassignDoctor(shiftId: string, userId: string) {
-    return this.prisma.shiftAssignment.delete({
+  async unassignDoctor(shiftId: string, userId: string, actorId?: string) {
+    // ดึงข้อมูลก่อนลบ เพื่อ log
+    const assignment = await this.prisma.shiftAssignment.findUnique({
+      where: { shiftId_userId: { shiftId, userId } },
+      include: {
+        user: { select: { firstName: true, lastName: true } },
+        shift: { select: { scheduleId: true, date: true, shiftType: true } },
+      },
+    });
+
+    const result = await this.prisma.shiftAssignment.delete({
       where: { shiftId_userId: { shiftId, userId } },
     });
+
+    if (assignment) {
+      const actorName = await this.getActorName(actorId);
+      const day = parseInt(assignment.shift.date.split('-')[2]);
+      await this.log(
+        assignment.shift.scheduleId, 'UNASSIGN',
+        `${actorName} ถอด ${assignment.user.firstName} ${assignment.user.lastName.charAt(0)}. ออกจาก ${assignment.shift.shiftType} วันที่ ${day}`,
+        actorId,
+      );
+    }
+
+    return result;
   }
+
+  // ─── Confirm ───────────────────────────────────────────────────────────────
+
+  async toggleConfirm(scheduleId: string, userId: string) {
+    const existing = await this.prisma.scheduleDoctor.findUnique({
+      where: { scheduleId_userId: { scheduleId, userId } },
+      include: { user: { select: { firstName: true, lastName: true } } },
+    });
+    if (!existing) return null;
+
+    const isConfirming = !existing.confirmedAt;
+    const result = await this.prisma.scheduleDoctor.update({
+      where: { scheduleId_userId: { scheduleId, userId } },
+      data: { confirmedAt: isConfirming ? new Date() : null },
+    });
+
+    const name = `${existing.user.firstName} ${existing.user.lastName.charAt(0)}.`;
+    await this.log(
+      scheduleId,
+      isConfirming ? 'CONFIRM' : 'UNCONFIRM',
+      isConfirming ? `${name} ยืนยันเวร ✓` : `${name} ยกเลิกยืนยันเวร`,
+      userId,
+    );
+
+    return result;
+  }
+
+  // ─── Shift Count ───────────────────────────────────────────────────────────
 
   async getShiftCount(scheduleId: string) {
     const schedule = await this.prisma.schedule.findUnique({
@@ -208,31 +339,35 @@ export class SchedulesService {
 
     if (!schedule) return null;
 
-    const counts = new Map<
-      string,
-      { user: { id: string; firstName: string; lastName: string }; NIGHTSHIFT: number; OPD: number; ER: number; SPECIAL_CLINIC: number; total: number }
-    >();
+    const counts = new Map<string, Record<string, any>>();
 
     for (const shift of schedule.shifts) {
       for (const assignment of shift.assignments) {
-        const userId = assignment.user.id;
-        if (!counts.has(userId)) {
-          counts.set(userId, {
-            user: assignment.user,
-            NIGHTSHIFT: 0,
-            OPD: 0,
-            ER: 0,
-            SPECIAL_CLINIC: 0,
-            total: 0,
-          });
+        const uid = assignment.user.id;
+        if (!counts.has(uid)) {
+          counts.set(uid, { user: assignment.user, total: 0 });
         }
-        const entry = counts.get(userId)!;
-        const st = shift.shiftType as 'NIGHTSHIFT' | 'OPD' | 'ER' | 'SPECIAL_CLINIC';
-        entry[st] += 1;
+        const entry = counts.get(uid)!;
+        entry[shift.shiftType] = (entry[shift.shiftType] || 0) + 1;
         entry.total += 1;
       }
     }
 
-    return Array.from(counts.values()).sort((a, b) => a.user.firstName.localeCompare(b.user.firstName));
+    return Array.from(counts.values()).sort((a, b) =>
+      a.user.firstName.localeCompare(b.user.firstName),
+    );
+  }
+
+  // ─── Activity Logs ─────────────────────────────────────────────────────────
+
+  async getActivityLogs(scheduleId: string) {
+    return this.prisma.activityLog.findMany({
+      where: { scheduleId },
+      include: {
+        actor: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
   }
 }

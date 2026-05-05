@@ -14,13 +14,21 @@ export interface ShiftAssignment {
 export interface Shift {
   id: string;
   date: string;
-  shiftType: 'NIGHTSHIFT' | 'OPD' | 'ER' | 'SPECIAL_CLINIC';
+  shiftType: string;
   assignments: ShiftAssignment[];
 }
 
 export interface ScheduleDoctor {
   id: string;
   user: User;
+  confirmedAt?: string | null;
+}
+
+export interface ShiftTypeConfig {
+  id: string;
+  name: string;
+  days: string; // "0,1,2,3,4,5,6" — comma-separated getDay() values
+  order: number;
 }
 
 export interface Schedule {
@@ -29,18 +37,34 @@ export interface Schedule {
   month: number;
   year: number;
   status: 'DRAFT' | 'PUBLISHED';
+  createdAt?: string;
+  updatedAt?: string;
   doctors: ScheduleDoctor[];
   shifts: Shift[];
+  shiftTypes: ShiftTypeConfig[];
 }
 
 export interface ShiftCount {
   user: User;
-  NIGHTSHIFT: number;
-  OPD: number;
-  ER: number;
-  SPECIAL_CLINIC: number;
   total: number;
+  [shiftType: string]: number | User;
 }
+
+export interface ActivityLog {
+  id: string;
+  scheduleId: string;
+  actorId: string | null;
+  action: string;
+  detail: string;
+  createdAt: string;
+  actor: User | null;
+}
+
+// Helper: ส่ง actorId ผ่าน header
+const actorHeaders = () => {
+  const id = localStorage.getItem('shiftly:myUserId');
+  return id ? { 'X-Actor-Id': id } : {};
+};
 
 export const schedulesApi = {
   getAll: (year?: number) =>
@@ -49,29 +73,35 @@ export const schedulesApi = {
   getOne: (id: string) =>
     api.get<Schedule>(`/schedules/${id}`),
 
-  create: (month: number, year: number, doctorIds?: string[]) =>
-    api.post<Schedule>('/schedules', { month, year, doctorIds }),
+  create: (month: number, year: number, doctorIds?: string[], shiftTypes?: { name: string; days: number[] }[]) =>
+    api.post<Schedule>('/schedules', { month, year, doctorIds, shiftTypes }, { headers: actorHeaders() }),
 
   generate: (id: string) =>
-    api.post<Schedule>(`/schedules/${id}/generate`),
+    api.post<Schedule>(`/schedules/${id}/generate`, null, { headers: actorHeaders() }),
 
   publish: (id: string) =>
-    api.put(`/schedules/${id}/publish`),
+    api.put(`/schedules/${id}/publish`, null, { headers: actorHeaders() }),
 
   unpublish: (id: string) =>
-    api.put(`/schedules/${id}/draft`),
+    api.put(`/schedules/${id}/draft`, null, { headers: actorHeaders() }),
 
   remove: (id: string) =>
     api.delete(`/schedules/${id}`),
 
   assignDoctor: (scheduleId: string, shiftId: string, userId: string) =>
-    api.post(`/schedules/${scheduleId}/shifts/${shiftId}/assign`, { userId }),
+    api.post(`/schedules/${scheduleId}/shifts/${shiftId}/assign`, { userId }, { headers: actorHeaders() }),
 
   unassignDoctor: (scheduleId: string, shiftId: string, userId: string) =>
-    api.delete(`/schedules/${scheduleId}/shifts/${shiftId}/assign/${userId}`),
+    api.delete(`/schedules/${scheduleId}/shifts/${shiftId}/assign/${userId}`, { headers: actorHeaders() }),
 
   getShiftCount: (id: string) =>
     api.get<ShiftCount[]>(`/schedules/${id}/shift-count`),
+
+  toggleConfirm: (scheduleId: string, userId: string) =>
+    api.post(`/schedules/${scheduleId}/doctors/${userId}/confirm`),
+
+  getLogs: (id: string) =>
+    api.get<ActivityLog[]>(`/schedules/${id}/logs`),
 };
 
 export const usersApi = {

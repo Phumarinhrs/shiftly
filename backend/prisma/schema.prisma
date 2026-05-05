@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -23,6 +23,7 @@ model User {
   leaveReports    LeaveReport[]
   availability    Availability[]
   scheduleRoster  ScheduleDoctor[]
+  activityLogs    ActivityLog[]
 }
 
 model Schedule {
@@ -34,16 +35,29 @@ model Schedule {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  shifts  Shift[]
-  doctors ScheduleDoctor[]
+  shifts       Shift[]
+  doctors      ScheduleDoctor[]
+  shiftTypes   ShiftType[]
+  activityLogs ActivityLog[]
 
   @@unique([month, year])
 }
 
-model ScheduleDoctor {
+model ShiftType {
   id         String @id @default(cuid())
   scheduleId String
-  userId     String
+  name       String // ชื่อเวร เช่น เวรดึก, OPD, ER
+  days       String @default("0,1,2,3,4,5,6") // วันที่ใช้เวรนี้ (0=อา,1=จ,...,6=ส) คั่นด้วย comma
+  order      Int    @default(0)
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+}
+
+model ScheduleDoctor {
+  id          String    @id @default(cuid())
+  scheduleId  String
+  userId      String
+  confirmedAt DateTime?
 
   schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id])
@@ -112,4 +126,16 @@ model Availability {
   user User @relation(fields: [userId], references: [id])
 
   @@unique([userId, date])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  scheduleId String
+  actorId    String?  // ใครเป็นคนทำ (null = ระบบ)
+  action     String   // ASSIGN | UNASSIGN | GENERATE | CONFIRM | UNCONFIRM | CREATE | PUBLISH | UNPUBLISH
+  detail     String   // คำอธิบายภาษาไทย
+  createdAt  DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  actor    User?    @relation(fields: [actorId], references: [id])
 }

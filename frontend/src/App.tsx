@@ -52,12 +52,28 @@ function PageTransition({ children, pageKey }: { children: React.ReactNode; page
 }
 
 function App() {
-  const [page, setPage] = useState<Page>('home');
+  // เริ่มที่หน้า schedule ทันทีถ้า URL มี #/schedule/...
+  const initialPage: Page = window.location.hash.startsWith('#/schedule') ? 'schedule' : 'home';
+  const [page, setPage] = useState<Page>(initialPage);
   const [navVisible, setNavVisible] = useState(false);
 
   const navigate = (next: Page) => {
+    if (next === 'home') {
+      // ออกจาก detail → ล้าง hash
+      if (window.location.hash) window.location.hash = '';
+    }
     setPage(next);
   };
+
+  // Listen hash changes — sync page state
+  useEffect(() => {
+    const onHash = () => {
+      const isSchedule = window.location.hash.startsWith('#/schedule');
+      setPage(isSchedule ? 'schedule' : 'home');
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   // Animate back button in/out
   useEffect(() => {
@@ -97,6 +113,7 @@ function App() {
           <button
             className="nav-back"
             onClick={() => navigate('home')}
+            aria-label="กลับสู่หน้าหลัก"
             style={{
               opacity: navVisible ? 1 : 0,
               transform: navVisible ? 'translateX(0)' : 'translateX(8px)',
@@ -104,7 +121,8 @@ function App() {
               pointerEvents: navVisible ? 'auto' : 'none',
             }}
           >
-            ‹ หน้าหลัก
+            <span className="nav-back-arrow" aria-hidden="true">←</span>
+            <span>หน้าหลัก</span>
           </button>
         </nav>
 

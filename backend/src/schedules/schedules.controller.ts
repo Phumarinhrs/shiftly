@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Headers,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -34,34 +35,54 @@ export class SchedulesController {
 
   // POST /api/schedules — สร้างตารางเวรรายเดือน
   @Post()
-  async create(@Body() body: { month: number; year: number; title?: string; doctorIds?: string[] }) {
+  async create(
+    @Body() body: {
+      month: number;
+      year: number;
+      title?: string;
+      doctorIds?: string[];
+      shiftTypes?: { name: string; days: number[] }[];
+    },
+    @Headers('x-actor-id') actorId?: string,
+  ) {
     const existing = await this.schedulesService.findByMonthYear(body.month, body.year);
     if (existing) {
       throw new HttpException('Schedule for this month already exists', HttpStatus.CONFLICT);
     }
-    return this.schedulesService.create(body.month, body.year, body.title, body.doctorIds ?? []);
+    return this.schedulesService.create(
+      body.month, body.year, body.title, body.doctorIds ?? [], body.shiftTypes, actorId,
+    );
   }
 
   // POST /api/schedules/:id/generate — Auto-generate เวรทั้งเดือน
   @Post(':id/generate')
-  async generate(@Param('id') id: string) {
+  async generate(
+    @Param('id') id: string,
+    @Headers('x-actor-id') actorId?: string,
+  ) {
     const schedule = await this.schedulesService.findOne(id);
     if (!schedule) {
       throw new HttpException('Schedule not found', HttpStatus.NOT_FOUND);
     }
-    return this.schedulesService.autoGenerate(id);
+    return this.schedulesService.autoGenerate(id, actorId);
   }
 
   // PUT /api/schedules/:id/publish
   @Put(':id/publish')
-  async publish(@Param('id') id: string) {
-    return this.schedulesService.updateStatus(id, 'PUBLISHED');
+  async publish(
+    @Param('id') id: string,
+    @Headers('x-actor-id') actorId?: string,
+  ) {
+    return this.schedulesService.updateStatus(id, 'PUBLISHED', actorId);
   }
 
   // PUT /api/schedules/:id/draft
   @Put(':id/draft')
-  async unpublish(@Param('id') id: string) {
-    return this.schedulesService.updateStatus(id, 'DRAFT');
+  async unpublish(
+    @Param('id') id: string,
+    @Headers('x-actor-id') actorId?: string,
+  ) {
+    return this.schedulesService.updateStatus(id, 'DRAFT', actorId);
   }
 
   // DELETE /api/schedules/:id
@@ -75,8 +96,9 @@ export class SchedulesController {
   async assignDoctor(
     @Param('shiftId') shiftId: string,
     @Body() body: { userId: string },
+    @Headers('x-actor-id') actorId?: string,
   ) {
-    return this.schedulesService.assignDoctor(shiftId, body.userId);
+    return this.schedulesService.assignDoctor(shiftId, body.userId, actorId);
   }
 
   // Delete /api/schedules/:id/shifts/:shiftId/assign/:userId — ถอดหมอออกจากเวร
@@ -84,13 +106,33 @@ export class SchedulesController {
   async unassignDoctor(
     @Param('shiftId') shiftId: string,
     @Param('userId') userId: string,
+    @Headers('x-actor-id') actorId?: string,
   ) {
-    return this.schedulesService.unassignDoctor(shiftId, userId);
+    return this.schedulesService.unassignDoctor(shiftId, userId, actorId);
   }
 
   // GET /api/schedules/:id/shift-count — นับเวรแต่ละคน
   @Get(':id/shift-count')
   async shiftCount(@Param('id') id: string) {
     return this.schedulesService.getShiftCount(id);
+  }
+
+  // POST /api/schedules/:id/doctors/:userId/confirm — toggle stamp ยืนยันเวรของฉัน
+  @Post(':id/doctors/:userId/confirm')
+  async toggleConfirm(
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    const result = await this.schedulesService.toggleConfirm(id, userId);
+    if (!result) {
+      throw new HttpException('Doctor not in this schedule', HttpStatus.NOT_FOUND);
+    }
+    return result;
+  }
+
+  // GET /api/schedules/:id/logs — ดู Activity logs
+  @Get(':id/logs')
+  async getLogs(@Param('id') id: string) {
+    return this.schedulesService.getActivityLogs(id);
   }
 }
