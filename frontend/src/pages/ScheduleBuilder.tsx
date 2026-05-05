@@ -7,7 +7,6 @@ import {
 import {
   PlusOutlined, ThunderboltOutlined,
   DeleteOutlined, BarChartOutlined,
-  TeamOutlined,
   MinusCircleOutlined,
   LinkOutlined, CheckCircleFilled, ClockCircleOutlined,
   HistoryOutlined,
@@ -23,7 +22,7 @@ import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { toPng } from 'html-to-image';
 import {
   schedulesApi, usersApi,
-  type Schedule, type Shift, type ShiftCount, type ShiftTypeConfig, type ActivityLog,
+  type Schedule, type Shift, type ShiftCount, type ActivityLog,
 } from '../api/schedules';
 
 const { Title, Text } = Typography;
@@ -32,7 +31,6 @@ const SHIFT_COLORS = ['purple', 'blue', 'red', 'orange', 'green', 'cyan', 'magen
 
 // 0=อา 1=จ 2=อ 3=พ 4=พฤ 5=ศ 6=ส
 const ALL_DAYS = [1, 2, 3, 4, 5, 6, 0]; // เรียงแสดง จ–ส–อา
-const WEEKDAYS = [1, 2, 3, 4, 5];
 const DAY_LABELS: Record<number, string> = { 0: 'อา', 1: 'จ', 2: 'อ', 3: 'พ', 4: 'พฤ', 5: 'ศ', 6: 'ส' };
 
 const DEFAULT_SHIFT_TYPES: { name: string; days: number[] }[] = [
@@ -215,7 +213,8 @@ export default function ScheduleBuilder() {
   const shiftTypeFirstRef = useRef<any>(null);
   const tableExportRef = useRef<HTMLDivElement>(null);
   const doctorFormRef = useRef<HTMLDivElement>(null);
-  const doctorCountRef = useRef<HTMLInputElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const doctorCountRef = useRef<any>(null);
 
   // Auto-focus input รูปแบบเวร เมื่อเข้า Step 2
   useEffect(() => {
