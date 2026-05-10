@@ -29,7 +29,8 @@ docker compose up -d postgres
 cd backend
 cp .env.example .env
 npm install
-npx prisma db push
+npx prisma db push          # สร้าง schema ใน DB
+npx prisma db seed          # (ครั้งแรกเท่านั้น) เพิ่ม user ตัวอย่าง
 npm run start:dev
 ```
 Backend รันที่ http://localhost:3000
