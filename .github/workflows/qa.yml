@@ -1,4 +1,4 @@
-name: 🧪 QA — Build & Deploy
+name: 🧪 QA — Build & Type Check
 
 on:
   push:
@@ -46,51 +46,6 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run build
 
-  # ── Deploy to QA (only on push, not PR) ─────────────────────────
-  deploy-backend-qa:
-    name: 🚀 Deploy Backend → Railway QA
-    needs: [backend-check]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    environment: qa
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Railway CLI
-        run: npm i -g @railway/cli
-      - name: Deploy to Railway
-        run: railway up --service ${{ vars.RAILWAY_SERVICE_BACKEND }} --detach
-        working-directory: backend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN_QA }}
-
-  deploy-frontend-qa:
-    name: 🚀 Deploy Frontend → Vercel QA
-    needs: [frontend-check]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    environment: qa
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Install Vercel CLI
-        run: npm i -g vercel@latest
-      - name: Pull Vercel env
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: frontend
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_QA }}
-      - name: Build
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: frontend
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_QA }}
-      - name: Deploy
-        run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
-        working-directory: frontend
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_QA }}
+# Note: Deploy ทำผ่าน:
+#  - Backend: Railway auto-deploy จาก GitHub
+#  - Frontend: vercel CLI หรือเชื่อม Vercel กับ GitHub repo
