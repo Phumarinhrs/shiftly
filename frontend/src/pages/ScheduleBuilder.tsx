@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Button, Card, Select, Table, Tag, Modal, message,
   Space, Popconfirm, Badge, Spin, Typography,
-  Input, InputNumber,
+  Input, InputNumber, Radio, Tooltip,
 } from 'antd';
 import {
   PlusOutlined, ThunderboltOutlined,
@@ -11,6 +11,8 @@ import {
   LinkOutlined, CheckCircleFilled, ClockCircleOutlined,
   HistoryOutlined,
   DownloadOutlined,
+  TeamOutlined, EditOutlined,
+  TableOutlined, CalendarOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -21,8 +23,8 @@ import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { toPng } from 'html-to-image';
 import {
-  schedulesApi, usersApi,
-  type Schedule, type Shift, type ShiftCount, type ActivityLog,
+  schedulesApi, usersApi, teamsApi,
+  type Schedule, type Shift, type ShiftCount, type ActivityLog, type Team,
 } from '../api/schedules';
 
 const { Title, Text } = Typography;
@@ -72,26 +74,42 @@ function DraggableTag({
     disabled: locked,
   });
   return (
-    <Tag
+    <span
       ref={setNodeRef}
-      color={color}
-      closable={!locked}
-      onClose={onClose}
       style={{
+        display: 'inline-flex', alignItems: 'center', gap: 3,
+        background: color,
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: 500,
+        padding: '2px 7px',
+        borderRadius: 4,
         cursor: locked ? 'default' : isDragging ? 'grabbing' : 'grab',
         opacity: isDragging ? 0.25 : 1,
         userSelect: 'none',
         transition: 'opacity 0.15s',
+        lineHeight: '20px',
       }}
       {...(locked ? {} : { ...listeners, ...attributes })}
     >
       {label}
-    </Tag>
+      {!locked && (
+        <span
+          onClick={onClose}
+          style={{
+            display: 'inline-flex', alignItems: 'center',
+            opacity: 0.75, fontSize: 10, cursor: 'pointer', lineHeight: 1,
+          }}
+        >
+          ✕
+        </span>
+      )}
+    </span>
   );
 }
 
-function DroppableCell({ shiftId, children }: { shiftId: string; children: React.ReactNode }) {
-  const { isOver, setNodeRef } = useDroppable({ id: shiftId, data: { shiftId } });
+function DroppableCell({ shiftId, children, disabled }: { shiftId: string; children: React.ReactNode; disabled?: boolean }) {
+  const { isOver, setNodeRef } = useDroppable({ id: shiftId, data: { shiftId }, disabled });
   return (
     <div
       ref={setNodeRef}
@@ -128,6 +146,131 @@ export default function ScheduleBuilder() {
   }, [myUserId]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  // View mode for detail view
+  const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
+
+  // Teams
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [teamName, setTeamName] = useState('');
+  const [teamSlots, setTeamSlots] = useState<DoctorSlot[]>([]);
+  const [teamSlotKey, setTeamSlotKey] = useState(0);
+  const [savingTeam, setSavingTeam] = useState(false);
+
+  const loadTeams = async () => {
+    const { data } = await teamsApi.getAll();
+    setTeams(data);
+  };
+
+  const openTeamModal = async () => {
+    setShowTeamModal(true);
+    setTeamName('');
+    setTeamSlots([{ key: 0, firstName: '', lastName: '' }]);
+    setTeamSlotKey(1);
+    const { data } = await teamsApi.getAll();
+    setTeams(data);
+  };
+
+  const addTeamSlot = () => {
+    setTeamSlots((prev) => [...prev, { key: teamSlotKey, firstName: '', lastName: '' }]);
+    setTeamSlotKey((k) => k + 1);
+  };
+
+  const removeTeamSlot = (key: number) => {
+    setTeamSlots((prev) => prev.filter((s) => s.key !== key));
+  };
+
+  const updateTeamSlot = (key: number, value: string) => {
+    setTeamSlots((prev) => prev.map((s) => s.key === key ? { ...s, firstName: value } : s));
+  };
+
+  const handleCreateTeam = async () => {
+    const filled = teamSlots.filter((s) => s.firstName.trim());
+    if (!teamName.trim() || filled.length === 0) return;
+    setSavingTeam(true);
+    try {
+      const userIds: string[] = [];
+      for (const slot of filled) {
+        const { data: u } = await usersApi.create(slot.firstName.trim(), '');
+        userIds.push(u.id);
+      }
+      await teamsApi.create(teamName.trim(), userIds);
+      await loadTeams();
+      setTeamName('');
+      setTeamSlots([{ key: 0, firstName: '', lastName: '' }]);
+      setTeamSlotKey(1);
+      message.success('สร้างทีมสำเร็จ');
+    } finally {
+      setSavingTeam(false);
+    }
+  };
+
+  const handleDeleteTeam = async (id: string) => {
+    await teamsApi.remove(id);
+    setTeams((prev) => prev.filter((t) => t.id !== id));
+    if (editingTeamId === id) setEditingTeamId(null);
+    message.success('ลบทีมแล้ว');
+  };
+
+  // Edit team
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [editTeamName, setEditTeamName] = useState('');
+  const [editTeamSlots, setEditTeamSlots] = useState<DoctorSlot[]>([]);
+  const [editTeamSlotKey, setEditTeamSlotKey] = useState(0);
+  const [savingEditTeam, setSavingEditTeam] = useState(false);
+
+  const startEditTeam = (team: Team) => {
+    setEditingTeamId(team.id);
+    setEditTeamName(team.name);
+    const slots = team.members.map((m, i) => ({ key: i, firstName: m.user.firstName, lastName: '' }));
+    setEditTeamSlots(slots);
+    setEditTeamSlotKey(slots.length);
+  };
+
+  const addEditTeamSlot = () => {
+    setEditTeamSlots((prev) => [...prev, { key: editTeamSlotKey, firstName: '', lastName: '' }]);
+    setEditTeamSlotKey((k) => k + 1);
+  };
+
+  const removeEditTeamSlot = (key: number) => {
+    setEditTeamSlots((prev) => prev.filter((s) => s.key !== key));
+  };
+
+  const updateEditTeamSlot = (key: number, value: string) => {
+    setEditTeamSlots((prev) => prev.map((s) => s.key === key ? { ...s, firstName: value } : s));
+  };
+
+  const handleSaveEditTeam = async () => {
+    const filled = editTeamSlots.filter((s) => s.firstName.trim());
+    if (!editTeamName.trim() || filled.length === 0 || !editingTeamId) return;
+    setSavingEditTeam(true);
+    try {
+      const userIds: string[] = [];
+      for (const slot of filled) {
+        const { data: u } = await usersApi.create(slot.firstName.trim(), '');
+        userIds.push(u.id);
+      }
+      await teamsApi.update(editingTeamId, editTeamName.trim(), userIds);
+      await loadTeams();
+      setEditingTeamId(null);
+      message.success('แก้ไขทีมสำเร็จ');
+    } finally {
+      setSavingEditTeam(false);
+    }
+  };
+
+  const handleLoadTeam = (teamId: string) => {
+    const team = teams.find((t) => t.id === teamId);
+    if (!team) return;
+    const slots = team.members.map((m, i) => ({
+      key: i,
+      firstName: m.user.firstName,
+      lastName: m.user.lastName,
+    }));
+    setDoctorSlots(slots);
+    setCountKey((k) => k + 1);
+  };
 
   // Create modal
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -178,6 +321,21 @@ export default function ScheduleBuilder() {
     }
   }, [selectedSchedule]);
 
+  // Thai public holidays from date.nager.at
+  const [holidays, setHolidays] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!selectedSchedule) return;
+    const year = selectedSchedule.year;
+    fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/TH`)
+      .then((r) => r.json())
+      .then((data: Array<{ date: string; localName: string; name: string }>) => {
+        const map: Record<string, string> = {};
+        data.forEach((h) => { map[h.date] = h.localName || h.name; });
+        setHolidays(map);
+      })
+      .catch(() => {});
+  }, [selectedSchedule?.year]);
+
   const loadSchedules = async () => {
     try {
       const { data } = await schedulesApi.getAll();
@@ -208,6 +366,7 @@ export default function ScheduleBuilder() {
     setDoctorSlots([]);
     setCountKey(0);
     setShowCreateModal(true);
+    teamsApi.getAll().then(({ data }) => setTeams(data));
   };
 
   const shiftTypeFirstRef = useRef<any>(null);
@@ -514,9 +673,9 @@ export default function ScheduleBuilder() {
 
   // ─── Doctor color map (แต่ละคนมีสีเฉพาะตัว) ──────────────────────────────
   const DOCTOR_COLORS = [
-    '#4A90D9', '#E06C75', '#98C379', '#C678DD', '#D19A66',
-    '#56B6C2', '#BE5046', '#7C3AED', '#E5C07B', '#61AFEF',
-    '#F472B6', '#34D399', '#FB923C', '#818CF8', '#A78BFA',
+    '#0958d9', '#cf1322', '#389e0d', '#531dab', '#d46b08',
+    '#0891b2', '#be123c', '#7c3aed', '#d48806', '#1d39c4',
+    '#c41d7f', '#059669', '#d4380d', '#4338ca', '#b45309',
   ];
   const doctorColorMap = new Map<string, string>();
   (selectedSchedule?.doctors ?? []).forEach((d, i) => {
@@ -549,10 +708,18 @@ export default function ScheduleBuilder() {
         const d = new Date(date);
         const isWeekend = d.getDay() === 0 || d.getDay() === 6;
         const day = parseInt(date.split('-')[2]);
+        const holidayName = holidays[date];
         return (
-          <span style={{ color: isWeekend ? '#f5222d' : undefined, fontWeight: 600 }}>
-            {DAY_NAMES[d.getDay()]} {day}
-          </span>
+          <div>
+            <span style={{ color: isWeekend || holidayName ? '#cf1322' : undefined, fontWeight: 600 }}>
+              {DAY_NAMES[d.getDay()]} {day}
+            </span>
+            {holidayName && (
+              <div style={{ fontSize: 11, color: '#222', fontWeight: 600, lineHeight: 1.4, marginTop: 2 }}>
+                🎌 {holidayName}
+              </div>
+            )}
+          </div>
         );
       },
     },
@@ -564,6 +731,8 @@ export default function ScheduleBuilder() {
         width: 180,
         className: 'shift-cell',
         render: (_: unknown, record: { date: string; shifts: Shift[] }) => {
+          const isHoliday = !!holidays[record.date];
+          if (isHoliday) return <span style={{ color: '#ffb3b3' }}>—</span>;
           const shift = record.shifts.find((s) => s.shiftType === st.name);
           if (!shift) return <span style={{ color: '#ddd' }}>-</span>;
           const assigned = shift.assignments[0];
@@ -696,6 +865,15 @@ export default function ScheduleBuilder() {
               />
             </Space>
             <Space>
+              <Radio.Group
+                value={viewMode}
+                onChange={(e) => setViewMode(e.target.value)}
+                optionType="button"
+                buttonStyle="solid"
+              >
+                <Tooltip title="ตารางเวร"><Radio.Button value="table"><TableOutlined /></Radio.Button></Tooltip>
+                <Tooltip title="ปฏิทิน"><Radio.Button value="calendar"><CalendarOutlined /></Radio.Button></Tooltip>
+              </Radio.Group>
               <Button icon={<LinkOutlined />} onClick={handleCopyLink}>คัดลอกลิ้งค์</Button>
               <Button icon={<DownloadOutlined />} onClick={handleExportPng}>Export PNG</Button>
               <Button icon={<BarChartOutlined />} onClick={handleShowCount}>สัดส่วนเวร</Button>
@@ -778,40 +956,198 @@ export default function ScheduleBuilder() {
             </div>
           </Card>
 
+          <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <DragOverlay dropAnimation={null} modifiers={[snapCenterToCursor]}>
+            {draggingInfo && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center',
+                background: draggingInfo.color, color: '#fff',
+                fontSize: 12, fontWeight: 500,
+                padding: '2px 7px', borderRadius: 4,
+                cursor: 'grabbing',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+                lineHeight: '20px',
+              }}>
+                {draggingInfo.label}
+              </span>
+            )}
+          </DragOverlay>
           <Spin spinning={loading}>
-            <Card>
-              <div ref={tableExportRef}>
-              <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-                <Table
-                  dataSource={tableData}
-                  columns={columns}
-                  rowKey="date"
-                  pagination={false}
-                  scroll={{ x: 900 }}
-                  size="small"
-                  bordered
-                  sticky={{ offsetHeader: 52 }}
-                />
-                <DragOverlay dropAnimation={null} modifiers={[snapCenterToCursor]}>
-                  {draggingInfo && (
-                    <Tag color={draggingInfo.color} style={{ cursor: 'grabbing', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}>
-                      {draggingInfo.label}
-                    </Tag>
-                  )}
-                </DragOverlay>
-              </DndContext>
-              </div>{/* end tableExportRef */}
-            </Card>
+            {viewMode === 'table' ? (
+              <Card>
+                <div ref={tableExportRef}>
+                  <Table
+                    dataSource={tableData}
+                    columns={columns}
+                    rowKey="date"
+                    pagination={false}
+                    scroll={{ x: 900 }}
+                    size="small"
+                    bordered
+                    sticky={{ offsetHeader: 52 }}
+                    onRow={(record) => ({
+                      style: holidays[record.date] ? { background: '#f0f0f0' } : undefined,
+                    })}
+                  />
+                </div>
+              </Card>
+            ) : (
+              /* ── Calendar view ── */
+              (() => {
+                const month = selectedSchedule!.month;
+                const year = selectedSchedule!.year;
+                const firstDay = new Date(year, month - 1, 1);
+                const daysInMonth = new Date(year, month, 0).getDate();
+
+                // Build day grid: weeks of Mon–Sun (ALL_DAYS order)
+                // ALL_DAYS = [1,2,3,4,5,6,0]
+                const startOffset = ALL_DAYS.indexOf(firstDay.getDay());
+                const totalCells = startOffset + daysInMonth;
+                const numWeeks = Math.ceil(totalCells / 7);
+
+                // Map date string → shifts
+                const shiftByDate: Record<string, Shift[]> = {};
+                for (const row of tableData) {
+                  shiftByDate[row.date] = row.shifts;
+                }
+
+                const DAY_LABEL_ORDER = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'];
+
+                const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local timezone
+
+
+                return (
+                  <div style={{
+                    height: 'calc(100vh - 260px)',
+                    display: 'flex', flexDirection: 'column',
+                    background: '#fff', borderRadius: 12,
+                    border: '1px solid rgba(0,0,0,0.07)',
+                    overflow: 'hidden',
+                  }}>
+                    {/* Day-of-week header */}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
+                      borderBottom: '1px solid rgba(0,0,0,0.08)',
+                    }}>
+                      {DAY_LABEL_ORDER.map((d) => (
+                        <div key={d} style={{
+                          textAlign: 'center', padding: '6px 0', fontSize: 11,
+                          fontWeight: 600, color: d === 'อา' ? '#f5222d' : '#555',
+                          background: 'rgba(0,0,0,0.02)',
+                        }}>
+                          {d}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Weeks grid */}
+                    <div style={{
+                      flex: 1,
+                      display: 'grid',
+                      gridTemplateRows: `repeat(${numWeeks}, 1fr)`,
+                    }}>
+                      {Array.from({ length: numWeeks }).map((_, weekIdx) => (
+                        <div key={weekIdx} style={{
+                          display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)',
+                          borderBottom: weekIdx < numWeeks - 1 ? '1px solid rgba(0,0,0,0.06)' : 'none',
+                        }}>
+                          {ALL_DAYS.map((_, colIdx) => {
+                            const cellIdx = weekIdx * 7 + colIdx;
+                            const day = cellIdx - startOffset + 1;
+                            const isValid = day >= 1 && day <= daysInMonth;
+                            const dateStr = isValid
+                              ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                              : '';
+                            const shifts = dateStr ? (shiftByDate[dateStr] ?? []) : [];
+                            const isWeekend = colIdx === 6; // อา column
+                            const isToday = dateStr === todayStr;
+                            const holidayName = dateStr ? holidays[dateStr] : undefined;
+                            const isHoliday = !!holidayName;
+
+                            return (
+                              <div key={colIdx} style={{
+                                borderRight: colIdx < 6 ? '1px solid rgba(0,0,0,0.06)' : 'none',
+                                padding: '4px 5px',
+                                background: !isValid
+                                  ? 'rgba(0,0,0,0.015)'
+                                  : isHoliday
+                                  ? '#f0f0f0'
+                                  : isToday
+                                  ? 'rgba(0,122,255,0.03)'
+                                  : '#fff',
+                                overflow: 'hidden',
+                                display: 'flex', flexDirection: 'column', gap: 2,
+                              }}>
+                                {isValid && (
+                                  <>
+                                    {/* Date number — Google Calendar style today circle */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 1 }}>
+                                      <span style={{
+                                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                        width: 20, height: 20, borderRadius: '50%',
+                                        fontSize: 11, fontWeight: isToday ? 700 : 600, lineHeight: 1,
+                                        background: isToday ? '#0958d9' : 'transparent',
+                                        color: isToday ? '#fff' : (isWeekend || isHoliday) ? '#cf1322' : '#333',
+                                      }}>
+                                        {day}
+                                      </span>
+                                    </div>
+                                    {/* Holiday label */}
+                                    {isHoliday && (
+                                      <span style={{
+                                        fontSize: 11, color: '#222', fontWeight: 600,
+                                        lineHeight: 1.4, whiteSpace: 'nowrap',
+                                        overflow: 'hidden', textOverflow: 'ellipsis',
+                                      }}>
+                                        🎌 {holidayName}
+                                      </span>
+                                    )}
+                                    {!isHoliday && shifts.map((shift) => (
+                                      <DroppableCell key={shift.id} shiftId={shift.id} disabled={isHoliday}>
+                                        {shift.assignments.map((a) => {
+                                          const hex = doctorColorMap.get(a.user.id) ?? '#888';
+                                          return (
+                                            <DraggableTag
+                                              key={`${shift.id}-${a.id}`}
+                                              shiftId={shift.id}
+                                              userId={a.user.id}
+                                              label={`${shift.shiftType} ${a.user.firstName}`}
+                                              color={hex}
+                                              locked={isLocked || isHoliday}
+                                              onClose={(e) => { e.preventDefault(); handleUnassign(shift.id, a.user.id); }}
+                                            />
+                                          );
+                                        })}
+                                      </DroppableCell>
+                                    ))}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()
+            )}
           </Spin>
+          </DndContext>
         </>
       ) : (
         /* ── List view ── */
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
             <Title level={4} style={{ margin: 0 }}>ตารางเวร</Title>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-              สร้างตารางใหม่
-            </Button>
+            <Space>
+              <Button icon={<TeamOutlined />} onClick={openTeamModal}>
+                จัดการทีม
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
+                สร้างตารางใหม่
+              </Button>
+            </Space>
           </div>
 
           {schedules.length === 0 ? (
@@ -1133,6 +1469,23 @@ export default function ScheduleBuilder() {
               </Text>
             </div>
 
+            {/* เลือกจากทีม */}
+            {teams.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <Select
+                  placeholder="เลือกจากทีมที่บันทึกไว้..."
+                  style={{ width: '100%' }}
+                  size="small"
+                  allowClear
+                  onChange={(val) => { if (val) handleLoadTeam(val); }}
+                  options={teams.map((t) => ({
+                    value: t.id,
+                    label: `${t.name} (${t.members.length} คน)`,
+                  }))}
+                />
+              </div>
+            )}
+
             {/* จำนวนแพทย์ */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -1232,6 +1585,159 @@ export default function ScheduleBuilder() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Team Management Modal */}
+      <Modal
+        title={<span><TeamOutlined style={{ marginRight: 8 }} />จัดการทีม</span>}
+        open={showTeamModal}
+        onCancel={() => setShowTeamModal(false)}
+        footer={null}
+        width={520}
+      >
+        {/* Existing teams */}
+        {teams.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            {teams.map((team) => (
+              <div
+                key={team.id}
+                style={{
+                  borderRadius: 8, marginBottom: 8,
+                  border: editingTeamId === team.id ? '1px solid #1677ff' : '1px solid rgba(0,0,0,0.06)',
+                  background: editingTeamId === team.id ? 'rgba(0,122,255,0.02)' : 'rgba(0,0,0,0.02)',
+                  overflow: 'hidden',
+                }}
+              >
+                {/* Header row */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px' }}>
+                  {editingTeamId === team.id ? (
+                    <Input
+                      value={editTeamName}
+                      onChange={(e) => setEditTeamName(e.target.value)}
+                      size="small"
+                      style={{ flex: 1, marginRight: 8, fontWeight: 600 }}
+                    />
+                  ) : (
+                    <div>
+                      <Text strong style={{ fontSize: 13 }}>{team.name}</Text>
+                      <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                        {team.members.map((m) => m.user.firstName).join(', ')}
+                      </Text>
+                    </div>
+                  )}
+                  <Space size={4}>
+                    {editingTeamId === team.id ? (
+                      <>
+                        <Button size="small" onClick={() => setEditingTeamId(null)}>ยกเลิก</Button>
+                        <Button
+                          type="primary" size="small"
+                          loading={savingEditTeam}
+                          disabled={!editTeamName.trim() || editTeamSlots.filter(s => s.firstName.trim()).length === 0}
+                          onClick={handleSaveEditTeam}
+                        >
+                          บันทึก
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEditTeam(team)} />
+                        <Popconfirm title="ลบทีมนี้?" onConfirm={() => handleDeleteTeam(team.id)} okText="ลบ" cancelText="ยกเลิก">
+                          <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+                        </Popconfirm>
+                      </>
+                    )}
+                  </Space>
+                </div>
+
+                {/* Inline edit member list */}
+                {editingTeamId === team.id && (
+                  <div style={{ padding: '0 12px 10px' }}>
+                    <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 6 }}>
+                      {editTeamSlots.map((slot, idx) => (
+                        <div key={slot.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                          <Text type="secondary" style={{ width: 18, textAlign: 'center', fontSize: 12, flexShrink: 0 }}>
+                            {idx + 1}
+                          </Text>
+                          <Input
+                            placeholder="ชื่อ"
+                            value={slot.firstName}
+                            onChange={(e) => updateEditTeamSlot(slot.key, e.target.value)}
+                            onPressEnter={addEditTeamSlot}
+                            size="small"
+                            style={{ flex: 1 }}
+                            autoFocus={idx === editTeamSlots.length - 1 && idx > 0}
+                          />
+                          <Button
+                            type="text" size="small"
+                            icon={<MinusCircleOutlined />}
+                            onClick={() => removeEditTeamSlot(slot.key)}
+                            style={{ flexShrink: 0, color: '#bbb' }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <Button type="dashed" icon={<PlusOutlined />} block size="small" onClick={addEditTeamSlot}>
+                      เพิ่มคน
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Create new team */}
+        <div style={{
+          padding: 12, borderRadius: 8,
+          border: '1px dashed rgba(0,0,0,0.15)',
+          background: 'rgba(0,122,255,0.02)',
+        }}>
+          <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 10 }}>สร้างทีมใหม่</Text>
+          <Input
+            placeholder="ชื่อทีม เช่น ทีม IPD, ทีม OPD"
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+            size="small"
+            style={{ marginBottom: 10 }}
+          />
+          <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 8 }}>
+            {teamSlots.map((slot, idx) => (
+              <div key={slot.key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <Text type="secondary" style={{ width: 18, textAlign: 'center', fontSize: 12, flexShrink: 0 }}>
+                  {idx + 1}
+                </Text>
+                <Input
+                  placeholder="ชื่อ"
+                  value={slot.firstName}
+                  onChange={(e) => updateTeamSlot(slot.key, e.target.value)}
+                  onPressEnter={addTeamSlot}
+                  size="small"
+                  style={{ flex: 1 }}
+                  autoFocus={idx === teamSlots.length - 1 && idx > 0}
+                />
+                <Button
+                  type="text" size="small"
+                  icon={<MinusCircleOutlined />}
+                  onClick={() => removeTeamSlot(slot.key)}
+                  style={{ flexShrink: 0, color: '#bbb' }}
+                />
+              </div>
+            ))}
+          </div>
+          <Button type="dashed" icon={<PlusOutlined />} block size="small" onClick={addTeamSlot} style={{ marginBottom: 10 }}>
+            เพิ่มคน
+          </Button>
+          <Button
+            type="primary"
+            block
+            size="small"
+            loading={savingTeam}
+            disabled={!teamName.trim() || teamSlots.filter(s => s.firstName.trim()).length === 0}
+            onClick={handleCreateTeam}
+          >
+            บันทึกทีม
+          </Button>
+        </div>
       </Modal>
 
       {/* Shift Count Modal */}
