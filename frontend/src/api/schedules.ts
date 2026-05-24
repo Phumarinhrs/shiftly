@@ -112,3 +112,23 @@ export const usersApi = {
     api.put<User>(`/users/${id}`, { firstName, lastName }),
   remove: (id: string) => api.delete(`/users/${id}`),
 };
+
+export interface TeamMember {
+  id: string;
+  user: User;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  members: TeamMember[];
+}
+
+export const teamsApi = {
+  getAll: () => api.get<Team[]>('/teams'),
+  create: (name: string, userIds: string[]) =>
+    api.post<Team>('/teams', { name, userIds }),
+  update: (id: string, name: string, userIds: string[]) =>
+    api.put<Team>(`/teams/${id}`, { name, userIds }),
+  remove: (id: string) => api.delete(`/teams/${id}`),
+};
