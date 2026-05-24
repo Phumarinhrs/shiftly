@@ -24,6 +24,27 @@ model User {
   availability    Availability[]
   scheduleRoster  ScheduleDoctor[]
   activityLogs    ActivityLog[]
+  teamMembers     TeamMember[]
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members TeamMember[]
+}
+
+model TeamMember {
+  id     String @id @default(cuid())
+  teamId String
+  userId String
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([teamId, userId])
 }
 
 model Schedule {
