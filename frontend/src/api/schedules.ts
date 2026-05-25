@@ -73,8 +73,8 @@ export const schedulesApi = {
   getOne: (id: string) =>
     api.get<Schedule>(`/schedules/${id}`),
 
-  create: (month: number, year: number, doctorIds?: string[], shiftTypes?: { name: string; days: number[] }[]) =>
-    api.post<Schedule>('/schedules', { month, year, doctorIds, shiftTypes }, { headers: actorHeaders() }),
+  create: (month: number, year: number, shiftTypes?: { name: string; days: number[] }[], title?: string, doctorIds?: string[]) =>
+    api.post<Schedule>('/schedules', { month, year, title, doctorIds, shiftTypes }, { headers: actorHeaders() }),
 
   generate: (id: string) =>
     api.post<Schedule>(`/schedules/${id}/generate`, null, { headers: actorHeaders() }),

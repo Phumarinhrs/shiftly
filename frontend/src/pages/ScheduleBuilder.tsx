@@ -50,7 +50,6 @@ const DAY_NAMES = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 interface DoctorSlot {
   key: number;
   firstName: string;
-  lastName: string;
 }
 
 interface ShiftTypeSlot {
@@ -266,7 +265,6 @@ export default function ScheduleBuilder() {
     const slots = team.members.map((m, i) => ({
       key: i,
       firstName: m.user.firstName,
-      lastName: m.user.lastName,
     }));
     setDoctorSlots(slots);
     setCountKey((k) => k + 1);
@@ -277,6 +275,7 @@ export default function ScheduleBuilder() {
   const [createStep, setCreateStep] = useState(0);
   const [createMonth, setCreateMonth] = useState(new Date().getMonth() + 1);
   const [createYear, setCreateYear] = useState(new Date().getFullYear());
+  const [createTitle, setCreateTitle] = useState('');
   const [shiftTypeSlots, setShiftTypeSlots] = useState<ShiftTypeSlot[]>([]);
   const [doctorSlots, setDoctorSlots] = useState<DoctorSlot[]>([]);
   const [countKey, setCountKey] = useState(0); // bump to remount InputNumber when +/- used
@@ -331,6 +330,13 @@ export default function ScheduleBuilder() {
       .then((data: Array<{ date: string; localName: string; name: string }>) => {
         const map: Record<string, string> = {};
         data.forEach((h) => { map[h.date] = h.localName || h.name; });
+        // TODO: remove mock holidays
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const allMonths = Array.from({ length: 12 }, (_, i) => i + 1);
+        allMonths.forEach((m) => {
+          map[`${year}-${pad(m)}-05`] = 'วันหยุดนักขัต mock data';
+          map[`${year}-${pad(m)}-15`] = 'วันหยุดนักขัต mock data';
+        });
         setHolidays(map);
       })
       .catch(() => {});
@@ -362,6 +368,7 @@ export default function ScheduleBuilder() {
     setCreateStep(0);
     setCreateMonth(new Date().getMonth() + 1);
     setCreateYear(new Date().getFullYear());
+    setCreateTitle('');
     setShiftTypeSlots(DEFAULT_SHIFT_TYPES.map((t, i) => ({ key: i, name: t.name, days: [...t.days] })));
     setDoctorSlots([]);
     setCountKey(0);
@@ -389,30 +396,16 @@ export default function ScheduleBuilder() {
     }
   }, [createStep]);
 
-  const focusNextInput = (currentIdx: number, currentField: 'firstName' | 'lastName') => {
+  const focusNextInput = (currentIdx: number) => {
     const container = doctorFormRef.current;
     if (!container) return;
-
-    let nextSelector: string;
-    if (currentField === 'firstName') {
-      // ชื่อ → นามสกุล (same row)
-      nextSelector = `[data-slot="${currentIdx}-lastName"]`;
-    } else {
-      // นามสกุล → ชื่อ (next row)
-      nextSelector = `[data-slot="${currentIdx + 1}-firstName"]`;
-    }
-
-    // Ant Design Input: data-slot goes on the <input> element directly
-    const next = container.querySelector<HTMLInputElement>(nextSelector);
-    if (next) {
-      next.focus();
-      next.select();
-    }
+    const next = container.querySelector<HTMLInputElement>(`[data-slot="${currentIdx + 1}-firstName"]`);
+    if (next) { next.focus(); next.select(); }
   };
 
-  const updateSlot = (key: number, field: 'firstName' | 'lastName', val: string) => {
+  const updateSlot = (key: number, val: string) => {
     setDoctorSlots((prev) =>
-      prev.map((s) => (s.key === key ? { ...s, [field]: val } : s))
+      prev.map((s) => (s.key === key ? { ...s, firstName: val } : s))
     );
   };
 
@@ -421,7 +414,7 @@ export default function ScheduleBuilder() {
     setDoctorSlots((prev) => {
       if (val > prev.length) {
         const extras: DoctorSlot[] = Array.from({ length: val - prev.length }, (_, i) => ({
-          key: Date.now() + i, firstName: '', lastName: '',
+          key: Date.now() + i, firstName: '',
         }));
         return [...prev, ...extras];
       }
@@ -435,7 +428,7 @@ export default function ScheduleBuilder() {
   };
 
   const addOneSlot = () => {
-    setDoctorSlots((prev) => [...prev, { key: Date.now(), firstName: '', lastName: '' }]);
+    setDoctorSlots((prev) => [...prev, { key: Date.now(), firstName: '' }]);
     setCountKey((k) => k + 1); // remount InputNumber to show updated count
   };
 
@@ -443,10 +436,6 @@ export default function ScheduleBuilder() {
     // ตรวจว่ารูปแบบเวรครบ
     if (shiftTypeSlots.length === 0) {
       message.warning('กรุณาเพิ่มรูปแบบเวรอย่างน้อย 1 ประเภท');
-      return;
-    }
-    if (shiftTypeSlots.some((s) => !s.name.trim())) {
-      message.warning('กรุณาใส่ชื่อเวรให้ครบทุกช่อง');
       return;
     }
     // ตรวจว่าทุกช่องมีชื่อแพทย์
@@ -462,15 +451,17 @@ export default function ScheduleBuilder() {
       const doctorIds: string[] = [];
       for (const slot of doctorSlots) {
         if (slot.firstName.trim()) {
-          const { data: newUser } = await usersApi.create(slot.firstName.trim(), slot.lastName.trim());
+          const { data: newUser } = await usersApi.create(slot.firstName.trim(), '');
           doctorIds.push(newUser.id);
         }
       }
 
       // สร้างตาราง พร้อม doctorIds + shiftTypes
       const { data: schedule } = await schedulesApi.create(
-        createMonth, createYear, doctorIds,
+        createMonth, createYear,
         shiftTypeSlots.map((s) => ({ name: s.name.trim(), days: s.days })),
+        createTitle.trim() || undefined,
+        doctorIds,
       );
 
       message.success('สร้างตารางเวรสำเร็จ');
@@ -1283,7 +1274,13 @@ export default function ScheduleBuilder() {
             <Space>
               <Button size="small" onClick={() => setShowCreateModal(false)}>ยกเลิก</Button>
               {createStep < 2 ? (
-                <Button type="primary" size="small" onClick={() => setCreateStep(createStep + 1)}>
+                <Button type="primary" size="small" onClick={() => {
+                  if (createStep === 1) {
+                    if (shiftTypeSlots.length === 0) { message.warning('กรุณาเพิ่มรูปแบบเวรอย่างน้อย 1 ประเภท'); return; }
+                    if (shiftTypeSlots.some((s) => !s.name.trim())) { message.warning('กรุณาใส่ชื่อเวรให้ครบทุกช่อง'); return; }
+                  }
+                  setCreateStep(createStep + 1);
+                }}>
                   ถัดไป
                 </Button>
               ) : (
@@ -1355,6 +1352,18 @@ export default function ScheduleBuilder() {
               <Text style={{ fontSize: 14, color: '#007AFF', fontWeight: 500 }}>
                 {MONTHS[createMonth - 1]} {createYear}
               </Text>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <Text type="secondary" style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
+                ชื่อตาราง <span style={{ color: '#bbb' }}>(ไม่ใส่ก็ได้)</span>
+              </Text>
+              <Input
+                value={createTitle}
+                onChange={(e) => setCreateTitle(e.target.value)}
+                placeholder={`ตารางเวร ${MONTHS[createMonth - 1]} ${createYear}`}
+                size="small"
+              />
             </div>
           </div>
         )}
@@ -1530,24 +1539,15 @@ export default function ScheduleBuilder() {
                       {idx + 1}
                     </Text>
                     <Input
-                      placeholder="ชื่อ"
+                      placeholder="ชื่อแพทย์"
                       value={slot.firstName}
-                      onChange={(e) => updateSlot(slot.key, 'firstName', e.target.value)}
-                      onPressEnter={() => focusNextInput(idx, 'firstName')}
+                      onChange={(e) => updateSlot(slot.key, e.target.value)}
+                      onPressEnter={() => focusNextInput(idx)}
                       data-slot={`${idx}-firstName`}
                       style={{ flex: 1 }}
                       size="small"
                       status={!slot.firstName.trim() ? 'error' : ''}
                       autoFocus={idx === 0 && !slot.firstName}
-                    />
-                    <Input
-                      placeholder="นามสกุล"
-                      value={slot.lastName}
-                      onChange={(e) => updateSlot(slot.key, 'lastName', e.target.value)}
-                      onPressEnter={() => focusNextInput(idx, 'lastName')}
-                      data-slot={`${idx}-lastName`}
-                      style={{ flex: 1 }}
-                      size="small"
                     />
                     <Button
                       type="text"
