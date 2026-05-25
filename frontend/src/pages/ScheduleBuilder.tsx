@@ -165,14 +165,14 @@ export default function ScheduleBuilder() {
   const openTeamModal = async () => {
     setShowTeamModal(true);
     setTeamName('');
-    setTeamSlots([{ key: 0, firstName: '', lastName: '' }]);
+    setTeamSlots([{ key: 0, firstName: '' }]);
     setTeamSlotKey(1);
     const { data } = await teamsApi.getAll();
     setTeams(data);
   };
 
   const addTeamSlot = () => {
-    setTeamSlots((prev) => [...prev, { key: teamSlotKey, firstName: '', lastName: '' }]);
+    setTeamSlots((prev) => [...prev, { key: teamSlotKey, firstName: '' }]);
     setTeamSlotKey((k) => k + 1);
   };
 
@@ -197,7 +197,7 @@ export default function ScheduleBuilder() {
       await teamsApi.create(teamName.trim(), userIds);
       await loadTeams();
       setTeamName('');
-      setTeamSlots([{ key: 0, firstName: '', lastName: '' }]);
+      setTeamSlots([{ key: 0, firstName: '' }]);
       setTeamSlotKey(1);
       message.success('สร้างทีมสำเร็จ');
     } finally {
@@ -228,7 +228,7 @@ export default function ScheduleBuilder() {
   };
 
   const addEditTeamSlot = () => {
-    setEditTeamSlots((prev) => [...prev, { key: editTeamSlotKey, firstName: '', lastName: '' }]);
+    setEditTeamSlots((prev) => [...prev, { key: editTeamSlotKey, firstName: '' }]);
     setEditTeamSlotKey((k) => k + 1);
   };
 
